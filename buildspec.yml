@@ -1,0 +1,22 @@
+# Copyright Amazon.com Inc. or its affiliates.
+
+version: "0.2"
+
+env:
+  parameter-store:
+        projectName: projectName
+        modelId: modelId
+        modelRegion: modelRegion
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 20
+
+  build:
+    on-failure: ABORT
+    commands:
+      - "npm install -g aws-cdk"
+      - "npm ci"
+      - "cdk bootstrap"
+      - "cdk deploy --all --require-approval=never --context projectName=${projectName} --context modelId=${modelId} --context modelRegion=${modelRegion}"

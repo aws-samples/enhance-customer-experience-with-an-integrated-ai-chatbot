@@ -1,0 +1,360 @@
+# Copyright Amazon.com Inc. or its affiliates.
+
+AWSTemplateFormatVersion: 2010-09-09
+Description: CICD codepipeline to deploy BackEnd template to aws cloud
+
+Parameters:
+
+    Project:
+      Description: Enter a Project Name.
+      Type: String
+      Default: demo
+
+    BedrockModelId:
+      Description: Type a Model ID from Bedrock. Please follow the same format as given on Bedrock.
+      Type: String
+      Default: anthropic.claude-3-5-sonnet-20240620-v1:0
+
+    BedrockModelRegion:
+      Description: Type the corresponding Model Region after varifying it on Bedrock. The ChatBot resources will be deployed in this region.
+      Type: String
+      Default: us-east-1
+      AllowedValues:
+        - us-east-1
+        - us-east-2
+        - us-west-1
+        - us-west-2
+        - ap-south-1
+        - ap-northeast-1
+        - ap-northeast-2
+        - ap-northeast-3
+        - ap-southeast-1
+        - ap-southeast-2
+        - ca-central-1
+        - eu-central-1
+        - eu-west-1
+        - eu-west-2
+        - eu-west-3
+        - eu-north-1
+        - sa-east-1
+    
+    GithubOwner:
+      Type: String
+      Description: "Github repo owner"
+      Default: aws-samples          
+
+    GithubRepo:
+      Type: String
+      Description: "Github repo name"
+      Default: enhance-customer-experience-with-an-integrated-ai-chatbot
+
+Resources:
+
+    #Storing the entered parameters in Parameter Store for the BackEnd application to access it
+    projectName:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: projectName
+        Type: String
+        Value: !Ref Project
+        Description: Project name
+        
+    modelId:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: modelId
+        Type: String
+        Value: !Ref BedrockModelId
+        Description: Bedrock model for Claude
+
+    modelRegion:
+      Type: AWS::SSM::Parameter
+      Properties:
+        Name: modelRegion
+        Type: String
+        Value: !Ref BedrockModelRegion
+        Description: Bedrock model region
+
+    MyLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: "PipelineLogGroup"
+        RetentionInDays: 30
+      Metadata:
+        cfn_nag:
+          rules_to_suppress:
+            - id: W84
+              reason: "Log groups are encrypted by default in CloudWatch."
+
+    #Artifacts Bucket : stores the source artifacts and build artifacts
+    ArtifactsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: !Sub ${AWS::AccountId}-${Project}-pipeline-artifacts-${AWS::Region}
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+        VersioningConfiguration:
+          Status: Enabled
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+      Metadata:
+        cfn_nag:
+          rules_to_suppress:
+            - id: W35
+              reason: "This is a demo solution. No need to persist logs to S3 bucket."
+        checkov:
+          skip:
+            - CKV_AWS_18 # This is a demo solution. No need to persist logs to S3 bucket."
+
+    S3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref ArtifactsBucket
+        PolicyDocument:
+          Statement:
+            - Action:
+                - s3:GetObject
+                - s3:PutObject
+              Effect: Allow
+              Resource:
+                - !Sub arn:aws:s3:::${ArtifactsBucket}
+                - !Sub arn:aws:s3:::${ArtifactsBucket}/*
+              Principal:
+                AWS:
+                  - !GetAtt CodeBuildServiceRoleBackEnd.Arn
+                  - !GetAtt CodePipelineRole.Arn
+
+    CodeBuildServiceRoleBackEnd:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /
+        AssumeRolePolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: codebuild.amazonaws.com
+              Action: sts:AssumeRole
+        MaxSessionDuration: 3600
+    
+    CodeBuildIamRolePolicy:
+      Type: AWS::IAM::Policy
+      Properties:
+        PolicyName: "CDKPolicy"
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - "iam:GetRole"
+                - "iam:UntagRole"
+                - "iam:GetPolicy"
+                - "iam:TagRole"
+                - "iam:CreateRole"
+                - "iam:DeleteRole"
+                - "iam:AttachRolePolicy"
+                - "iam:PutRolePolicy"
+                - "iam:TagPolicy"
+                - "iam:DetachRolePolicy"
+                - "iam:DeleteRolePolicy"
+                - "iam:UntagPolicy"
+                - "iam:UpdateRole"
+                - "iam:GetRolePolicy"
+                - "sts:AssumeRole"
+              Resource: 
+                - !Sub "arn:aws:iam::${AWS::AccountId}:role/cdk-*"
+                - !Sub "arn:aws:iam::${AWS::AccountId}:policy/*"
+            
+            - Effect: Allow
+              Action:
+                - "ssm:GetParameter"
+                - "ssm:GetParameters"
+                - "ssm:GetParametersByPath"
+                - "ssm:PutParameter"
+                - "ssm:DeleteParameter"
+              Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter*"
+            
+            - Effect: Allow
+              Action: 
+                - "cloudformation:CreateStack"
+                - "cloudformation:DescribeStacks"
+                - "cloudformation:DescribeStackEvents"
+                - "cloudformation:DescribeStackResources"
+                - "cloudformation:GetTemplate"
+                - "cloudformation:UpdateStack"
+                - "cloudformation:ValidateTemplate"
+                - "cloudformation:DeleteStack"
+                - "cloudformation:CreateChangeSet"
+                - "cloudformation:DescribeChangeSet"
+                - "cloudformation:ExecuteChangeSet"
+              Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/CDKToolkit/*"
+            
+            - Effect: Allow
+              Action: 
+                - "ecr:DeleteRepository"
+                - "ecr:DescribeRepositories"
+                - "ecr:SetRepositoryPolicy"
+                - "ecr:CreateRepository"
+                - "ecr:PutLifecyclePolicy"
+                - "ecr:GetAuthorizationToken"
+                - "ecr:BatchCheckLayerAvailability"
+                - "ecr:GetDownloadUrlForLayer"
+                - "ecr:BatchGetImage"
+                - "ecr:PutImage"
+              Resource: !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/cdk-*"
+            
+            - Effect: Allow
+              Action: 
+                - "logs:CreateLogGroup"
+                - "logs:CreateLogStream"
+                - "logs:PutLogEvents"
+              Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*"
+            
+            - Effect: Allow
+              Action:
+                - "s3:CreateBucket"
+                - "s3:DeleteBucket"
+                - "s3:PutBucketPolicy"
+                - "s3:DeleteBucketPolicy"
+                - "s3:PutBucketPublicAccessBlock"
+                - "s3:PutBucketVersioning"
+                - "s3:PutEncryptionConfiguration"
+                - "s3:PutLifecycleConfiguration" 
+                - "s3:*Object"
+                - "s3:ListBucket"
+                - "s3:GetBucketLocation"
+                - "s3:GetBucketAcl"
+              Resource:
+                - "arn:aws:s3:::cdk-*"
+      
+        Roles:
+          - !Ref CodeBuildServiceRoleBackEnd
+
+    CodePipelineRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: /
+        AssumeRolePolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: codepipeline.amazonaws.com
+              Action: sts:AssumeRole
+
+    PipelinePolicy:
+      Type: AWS::IAM::Policy
+      Properties:
+        PolicyName: !Sub ${Project}-codepipeline-role-Policy
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+              Resource:
+                - !Sub "arn:aws:s3:::${ArtifactsBucket}"
+                - !Sub "arn:aws:s3:::${ArtifactsBucket}/*"
+
+            - Action:
+                - codebuild:BatchGetBuilds
+                - codebuild:StartBuild
+                - codebuild:BatchGetBuildBatches
+                - codebuild:StartBuildBatch
+              Resource: !GetAtt CodeBuildProjectBackEnd.Arn
+              Effect: Allow
+
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: !GetAtt MyLogGroup.Arn
+            
+            - Effect: Allow
+              Action:
+                - "codestar-connections:UseConnection"
+              Resource:
+                - !Ref GithubConnection
+
+        Roles:
+          - !Ref CodePipelineRole
+
+    #CodeBuild Project for deploying the BackEnd stack
+    CodeBuildProjectBackEnd:
+      Type: AWS::CodeBuild::Project
+      Properties:
+        Artifacts:
+          Type: CODEPIPELINE
+        Environment:
+          ComputeType: BUILD_GENERAL1_SMALL
+          Image: "aws/codebuild/amazonlinux2-x86_64-standard:5.0"
+          Type: LINUX_CONTAINER
+        Name: !Sub "${Project}-BackEnd-Project"
+        ServiceRole: !GetAtt "CodeBuildServiceRoleBackEnd.Arn"
+        Source:
+          BuildSpec: buildspec.yml
+          Type: CODEPIPELINE
+      Metadata:
+        cfn_nag:
+          rules_to_suppress:
+            - id: W32
+              reason: "S3 artifacts bucket uses default AES256 encryption. No need to specify KMS key value."
+    
+    GithubConnection:
+      Type: AWS::CodeStarConnections::Connection
+      Properties:
+        ConnectionName: !Sub "${Project}-GithubConnection"
+        ProviderType: GitHub
+
+    #Pipeline to deploy cdk stack
+    CodePipelineBackEnd:
+      Type: AWS::CodePipeline::Pipeline
+      Properties:
+        Name: !Sub ${Project}-BackEnd-pipeline
+        RoleArn: !GetAtt CodePipelineRole.Arn
+        ArtifactStore:
+          Location: !Ref ArtifactsBucket
+          Type: S3
+        Stages:
+          - Name: Source
+            Actions:
+              - Name: Source
+                ActionTypeId:
+                  Category: Source
+                  Owner: AWS
+                  Provider: CodeStarSourceConnection
+                  Version: "1"
+                Configuration:
+                  BranchName: main
+                  ConnectionArn: !Ref GithubConnection
+                  FullRepositoryId: !Sub "${GithubOwner}/${GithubRepo}"
+                RunOrder: 1
+                OutputArtifacts:
+                  - Name: SourceArtifact
+                Region: !Sub ${AWS::Region}
+                Namespace: SourceVariables
+
+          - Name: "Build"
+            Actions:
+              - Name: "Build"
+                ActionTypeId:
+                  Category: Build
+                  Owner: AWS
+                  Provider: CodeBuild
+                  Version: "1"
+                Configuration:
+                  ProjectName: !Ref CodeBuildProjectBackEnd
+                InputArtifacts:
+                  - Name: SourceArtifact
+                OutputArtifacts:
+                  - Name: BuildArtifact
+                Region: !Sub ${AWS::Region}
+                Namespace: BuildVariables
+                RunOrder: 1

@@ -1,0 +1,8 @@
+# Copyright Amazon.com Inc. or its affiliates.
+
+*.ts
+!*.d.ts
+
+# CDK asset staging directory
+.cdk.staging
+cdk.out
