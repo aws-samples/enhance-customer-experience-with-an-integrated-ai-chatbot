@@ -111,7 +111,6 @@ export class DataSource extends Construct {
       dataSourceConfiguration: {
         s3Configuration: {
           bucketName: this.dataSourceBucket.bucketName,
-          inclusionPrefixes: ["docs"],
           documentsMetadataConfiguration: {
             s3Prefix: "metadata",
           },
